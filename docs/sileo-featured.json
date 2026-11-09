@@ -1,0 +1,13 @@
+{
+  "class": "FeaturedBannersView",
+  "itemSize": "{263, 148}",
+  "itemCornerRadius": 8,
+  "banners": [
+    {
+      "url": "https://mody-iq.github.io/CopyMod/banner.png",
+      "title": "CopyMod",
+      "package": "com.mody.copymod",
+      "hideShadow": false
+    }
+  ]
+}
