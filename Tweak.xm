@@ -20,12 +20,27 @@ static NSString *const kCMBarAssociationKey = @"com.mody.copymod.bar";
 
 #pragma mark - Host view helpers
 
+// One bar per keyboard window: the keyboard builds several host views (letters,
+// numbers, emoji) and they all share a single window, so keying off the window
+// guarantees exactly one button is ever installed.
+static UIView *CMWindowForHostView(id hostView) {
+    if (![hostView isKindOfClass:[UIView class]]) {
+        return nil;
+    }
+    return ((UIView *)hostView).window;
+}
+
 static CMKeyboardBar *CMBarForHostView(id hostView) {
-    return objc_getAssociatedObject(hostView, (__bridge const void *)kCMBarAssociationKey);
+    UIView *window = CMWindowForHostView(hostView);
+    return window ? objc_getAssociatedObject(window, (__bridge const void *)kCMBarAssociationKey) : nil;
 }
 
 static void CMSetBarForHostView(id hostView, CMKeyboardBar *bar) {
-    objc_setAssociatedObject(hostView, (__bridge const void *)kCMBarAssociationKey, bar,
+    UIView *window = CMWindowForHostView(hostView);
+    if (!window) {
+        return;
+    }
+    objc_setAssociatedObject(window, (__bridge const void *)kCMBarAssociationKey, bar,
                              OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
@@ -39,6 +54,9 @@ static void CMAttachBarToHostView(id hostView) {
             // Remove any previously installed UI as soon as the tweak is
             // disabled, instead of leaving it until the keyboard rebuilds.
             [bar detach];
+            return;
+        }
+        if (!CMWindowForHostView(hostView)) {
             return;
         }
         if (!bar) {

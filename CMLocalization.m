@@ -43,6 +43,7 @@ NSString *CMLocalizedString(NSString *key) {
           @"Exported to" : @"Exported to",
           @"No history to export" : @"No history to export",
           @"Export failed" : @"Export failed",
+          @"Copied to clipboard" : @"Copied to clipboard",
       };
       arabic = @{
           @"Search" : @"بحث",
@@ -71,6 +72,7 @@ NSString *CMLocalizedString(NSString *key) {
           @"Exported to" : @"تم التصدير إلى",
           @"No history to export" : @"لا يوجد سجل للتصدير",
           @"Export failed" : @"فشل التصدير",
+          @"Copied to clipboard" : @"تم النسخ إلى الحافظة",
       };
     });
 
