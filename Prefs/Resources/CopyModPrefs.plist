@@ -1,0 +1,9 @@
+{
+    entry = {
+        bundle = "CopyModPrefs";
+        cell = PSLinkCell;
+        detail = "CMRootListController";
+        label = "CopyMod";
+        isController = 1;
+    };
+}
