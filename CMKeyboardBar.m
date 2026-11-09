@@ -12,7 +12,9 @@
 + (instancetype)activeInstance;
 + (CGSize)sizeForInterfaceOrientation:(NSInteger)orientation;
 - (id)inputDelegate;
-- (id)textInputTraits;
+- (id)asynchronousInputDelegate;
+- (id)delegate;
+- (void)insertText:(NSString *)text;
 @end
 
 static const CGFloat kCMButtonSize = 34;
@@ -20,12 +22,11 @@ static const CGFloat kCMButtonInset = 6;
 static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
 
 @interface CMKeyboardBar () <UIGestureRecognizerDelegate>
-@property(nonatomic, weak) UIView *hostView;
-@property(nonatomic, strong) UIButton *button;
-@property(nonatomic, strong) UISwipeGestureRecognizer *swipe;
-@property(nonatomic, strong) CMPanelView *panel;
+@property(nonatomic, weak, readwrite, nullable) UIView *hostView;
+@property(nonatomic, strong, nullable) UIButton *button;
+@property(nonatomic, strong, nullable) UISwipeGestureRecognizer *swipe;
+@property(nonatomic, strong, nullable) CMPanelView *panel;
 @property(nonatomic, assign) BOOL presenting;
-@property(nonatomic, assign) CMActivation installedActivation;
 @end
 
 @implementation CMKeyboardBar
@@ -36,59 +37,44 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     if (!hostView) {
         return NO;
     }
-
-    // -layoutSubviews is called on every keyboard pass, so the attach path must
-    // be idempotent: on a repeat call we only refresh geometry and preferences.
-    if (self.hostView != hostView) {
-        [self detach];
-        self.hostView = hostView;
+    // Every UIInputSetHostView in the window calls in on each layout pass; the
+    // target is resolved once and only re-resolved when a taller host view
+    // appears, so the keyboard's hot layout path stays cheap.
+    UIView *target = [self resolveTargetForHostView:hostView];
+    if (!target) {
+        return NO;
     }
+    self.hostView = target;
 
-    [self applyActivation];
-
-    if (self.button) {
-        if (self.button.superview != hostView) {
-            // The keyboard rebuilt its subviews; re-attach our button.
-            [hostView addSubview:self.button];
-            [hostView bringSubviewToFront:self.button];
-        }
-        [self layoutButtonForHostView:hostView];
-    }
-    if (self.swipe && self.swipe.view != hostView) {
-        [hostView addGestureRecognizer:self.swipe];
-    }
-    // The keyboard re-lays its own subviews on every pass; keep our panel
-    // above them so it is never hidden behind the keys.
-    if (self.panel && self.panel.superview == hostView) {
-        [hostView bringSubviewToFront:self.panel];
-    }
-    return YES;
-}
-
-// Syncs the installed button/gesture with the current preference so a changed
-// activation method applies on the next keyboard layout pass.
-- (void)applyActivation {
     CMActivation activation = [CMPreferences activation];
-    if (activation == self.installedActivation) {
-        return;
-    }
-    self.installedActivation = activation;
-
     if (activation & CMActivationButton) {
-        [self installButtonInHostView:self.hostView];
+        [self installButtonInHostView:target];
     } else if (self.button) {
         [self.button removeFromSuperview];
         self.button = nil;
     }
-
     if (activation & CMActivationGesture) {
-        if (!self.swipe) {
-            [self installGestureInHostView:self.hostView];
-        }
+        [self installGestureInHostView:target];
     } else if (self.swipe) {
         [self.swipe.view removeGestureRecognizer:self.swipe];
         self.swipe = nil;
     }
+
+    if (self.panel && self.panel.superview == target) {
+        [target bringSubviewToFront:self.panel];
+    }
+    return YES;
+}
+
+- (UIView *)resolveTargetForHostView:(UIView *)hostView {
+    UIView *cached = self.hostView;
+    if (cached && cached.window) {
+        CGFloat cachedHeight = CGRectGetHeight(cached.bounds);
+        if (hostView == cached || CGRectGetHeight(hostView.bounds) <= cachedHeight) {
+            return cached;
+        }
+    }
+    return [self preferredHostViewFor:hostView];
 }
 
 - (void)detach {
@@ -98,14 +84,56 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
         [self.swipe.view removeGestureRecognizer:self.swipe];
         self.swipe = nil;
     }
-    self.installedActivation = 0;
+    [self.panel dismiss];
     self.hostView = nil;
+}
+
+- (void)refreshButton {
+    if (self.button && self.hostView) {
+        [self layoutButtonForHostView:self.hostView];
+    }
+}
+
+// The keyboard builds several UIInputSetHostView instances (letters, numbers,
+// emoji, ...). Only the tallest one is on screen, so pin the bar to that one.
+- (UIView *)preferredHostViewFor:(UIView *)hostView {
+    UIWindow *window = hostView.window;
+    if (!window) {
+        return hostView;
+    }
+    UIView *best = nil;
+    CGFloat bestHeight = 0;
+    for (UIView *candidate in [self descendantsOfView:window]) {
+        if (![NSStringFromClass(candidate.class) containsString:@"UIInputSetHostView"]) {
+            continue;
+        }
+        CGFloat height = CGRectGetHeight(candidate.bounds);
+        if (height > bestHeight) {
+            bestHeight = height;
+            best = candidate;
+        }
+    }
+    return best ?: hostView;
+}
+
+- (NSArray<UIView *> *)descendantsOfView:(UIView *)view {
+    NSMutableArray<UIView *> *all = [NSMutableArray array];
+    NSMutableArray<UIView *> *stack = [NSMutableArray arrayWithObject:view];
+    while (stack.count) {
+        UIView *current = stack.lastObject;
+        [stack removeLastObject];
+        [all addObject:current];
+        [stack addObjectsFromArray:current.subviews];
+    }
+    return all;
 }
 
 #pragma mark - Button
 
 - (void)installButtonInHostView:(UIView *)hostView {
     if (self.button && self.button.superview == hostView) {
+        [self layoutButtonForHostView:hostView];
+        [hostView bringSubviewToFront:self.button];
         return;
     }
     [self.button removeFromSuperview];
@@ -113,7 +141,7 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.accessibilityLabel = kCMButtonAccessibilityLabel;
     button.tintColor = [UIColor labelColor];
-    button.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.12];
+    button.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.14];
     button.layer.cornerRadius = kCMButtonSize / 2;
     button.clipsToBounds = YES;
     [button setImage:[UIImage systemImageNamed:@"doc.on.clipboard"] forState:UIControlStateNormal];
@@ -135,6 +163,12 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
 #pragma mark - Gesture
 
 - (void)installGestureInHostView:(UIView *)hostView {
+    if (self.swipe && self.swipe.view == hostView) {
+        return;
+    }
+    if (self.swipe) {
+        [self.swipe.view removeGestureRecognizer:self.swipe];
+    }
     UISwipeGestureRecognizer *swipe =
         [[UISwipeGestureRecognizer alloc] initWithTarget:self action:@selector(handleSwipe:)];
     swipe.numberOfTouchesRequired = 2;
@@ -143,8 +177,6 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     swipe.cancelsTouchesInView = NO;
     swipe.delaysTouchesBegan = NO;
     swipe.delaysTouchesEnded = NO;
-    // Let the swipe coexist with the keyboard's own recognizers instead of
-    // being blocked by them.
     swipe.delegate = self;
     [hostView addGestureRecognizer:swipe];
     self.swipe = swipe;
@@ -167,6 +199,9 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     if (self.presenting || !self.hostView) {
         return;
     }
+    if (self.panel && self.panel.superview) {
+        return;
+    }
     self.presenting = YES;
 
     // The panel is added on top of the keyboard host view, not presented modally:
@@ -177,7 +212,6 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     panel.panelHeight = [self keyboardHeight];
     __weak typeof(self) weakSelf = self;
     panel.dismissHandler = ^{
-      // Drop the bar's reference so the dismissed panel can be deallocated.
       weakSelf.panel = nil;
     };
     [panel presentInView:self.hostView];
@@ -207,25 +241,25 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
 
 #pragma mark - View controller lookup
 
-- (UIWindow *)activeAppWindow {
+- (NSArray<UIWindow *> *)appWindows {
+    NSMutableArray<UIWindow *> *ordered = [NSMutableArray array];
     UIApplication *application = UIApplication.sharedApplication;
-    // Prefer a foreground-scene key window that is not the keyboard window.
     for (UIScene *scene in application.connectedScenes) {
         if (![scene isKindOfClass:[UIWindowScene class]]) {
             continue;
         }
         for (UIWindow *window in ((UIWindowScene *)scene).windows) {
-            if (window.isKeyWindow && ![self windowIsKeyboardWindow:window]) {
-                return window;
+            if ([self windowIsKeyboardWindow:window] || window.hidden || window.alpha <= 0.01) {
+                continue;
+            }
+            if (window.isKeyWindow) {
+                [ordered insertObject:window atIndex:0];
+            } else {
+                [ordered addObject:window];
             }
         }
     }
-    for (UIWindow *window in application.windows) {
-        if (window.isKeyWindow && ![self windowIsKeyboardWindow:window]) {
-            return window;
-        }
-    }
-    return application.windows.firstObject;
+    return ordered;
 }
 
 - (BOOL)windowIsKeyboardWindow:(UIWindow *)window {
@@ -234,32 +268,75 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
 
 #pragma mark - CMPanelTextInputProvider
 
-- (id<UIKeyInput>)cm_currentTextInput {
-    // 1. Ask the active keyboard for its input delegate.
+- (BOOL)cm_insertText:(NSString *)text {
+    if (![text isKindOfClass:[NSString class]] || text.length == 0) {
+        return NO;
+    }
+    id<UIKeyInput> input = [self resolveTextInput];
+    if (input) {
+        @try {
+            [input insertText:text];
+            [self updateSecureStateFromResponder:input];
+            return YES;
+        } @catch (NSException *exception) {
+            CM_LOG(@"insertText failed: %@", exception.reason);
+        }
+    }
+
+    // Last resort: leave the text on the clipboard so the user can paste it.
+    @try {
+        [UIPasteboard generalPasteboard].string = text;
+    } @catch (__unused NSException *exception) {
+    }
+    return NO;
+}
+
+- (id<UIKeyInput>)resolveTextInput {
+    // 1. The focused field is the app's current first responder. This is the
+    //    exact object the keyboard types into, so it is tried first.
+    for (UIWindow *window in [self appWindows]) {
+        UIResponder *responder = [self firstResponderInView:window];
+        if ([self isTextInput:responder]) {
+            return (id<UIKeyInput>)responder;
+        }
+    }
+
+    // 2. Fall back to the active keyboard: its input delegate is the text input
+    //    object the keyboard forwards keystrokes to.
     @try {
         Class impl = NSClassFromString(@"UIKeyboardImpl");
-        id instance = [impl respondsToSelector:@selector(activeInstance)]
+        id keyboard = [impl respondsToSelector:@selector(activeInstance)]
                           ? [impl performSelector:@selector(activeInstance)]
                           : nil;
-        if (instance) {
-            id candidate = [instance respondsToSelector:@selector(inputDelegate)]
-                               ? [instance performSelector:@selector(inputDelegate)]
-                               : nil;
-            if ([candidate conformsToProtocol:@protocol(UIKeyInput)]) {
-                [self updateSecureStateFromResponder:candidate];
+        if (keyboard) {
+            id candidate = nil;
+            if ([keyboard respondsToSelector:@selector(inputDelegate)]) {
+                candidate = [keyboard inputDelegate];
+            }
+            if (![self isTextInput:candidate] &&
+                [keyboard respondsToSelector:@selector(asynchronousInputDelegate)]) {
+                candidate = [keyboard asynchronousInputDelegate];
+            }
+            if (![self isTextInput:candidate] && [keyboard respondsToSelector:@selector(delegate)]) {
+                candidate = [keyboard delegate];
+            }
+            if ([self isTextInput:candidate]) {
                 return candidate;
+            }
+            // UIKeyboardImpl itself accepts insertText: and forwards it to the
+            // focused field, which is a reliable last resort.
+            if ([keyboard respondsToSelector:@selector(insertText:)]) {
+                return keyboard;
             }
         }
     } @catch (__unused NSException *exception) {
     }
-
-    // 2. Fall back to a first-responder search in the app's windows.
-    UIResponder *responder = [self findFirstResponderInView:[self activeAppWindow]];
-    if ([responder conformsToProtocol:@protocol(UIKeyInput)]) {
-        [self updateSecureStateFromResponder:responder];
-        return (id<UIKeyInput>)responder;
-    }
     return nil;
+}
+
+- (BOOL)isTextInput:(id)candidate {
+    return candidate && [candidate conformsToProtocol:@protocol(UIKeyInput)] &&
+           [candidate respondsToSelector:@selector(insertText:)];
 }
 
 - (void)updateSecureStateFromResponder:(id)responder {
@@ -270,7 +347,7 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     [[CMMonitor sharedMonitor] setSecureInputActive:secure];
 }
 
-- (UIResponder *)findFirstResponderInView:(UIView *)view {
+- (UIResponder *)firstResponderInView:(UIView *)view {
     if (!view) {
         return nil;
     }
@@ -278,7 +355,7 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
         return view;
     }
     for (UIView *subview in view.subviews) {
-        UIResponder *responder = [self findFirstResponderInView:subview];
+        UIResponder *responder = [self firstResponderInView:subview];
         if (responder) {
             return responder;
         }

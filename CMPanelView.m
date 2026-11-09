@@ -5,27 +5,57 @@
 #import "CMLocalization.h"
 
 #import <notify.h>
-#import <objc/runtime.h>
 
 static NSString *const kCMCellIdentifier = @"CMHistoryCell";
-static const CGFloat kCMHeaderHeight = 52;
-static const CGFloat kCMKeypadHeight = 214;
-static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
+static const CGFloat kCMTitleHeight = 44;
+static const CGFloat kCMSearchHeight = 50;
+static const CGFloat kCMKeypadHeight = 198;
+static const CGFloat kCMHorizontalInset = 12;
 
-@interface CMPanelView () <UITableViewDataSource, UITableViewDelegate, UIAdaptivePresentationControllerDelegate>
+// Ordered app windows (key window first), excluding the keyboard's own window.
+static NSArray<UIWindow *> *CMAppWindows(void) {
+    NSMutableArray<UIWindow *> *ordered = [NSMutableArray array];
+    UIApplication *application = UIApplication.sharedApplication;
+    for (UIScene *scene in application.connectedScenes) {
+        if (![scene isKindOfClass:[UIWindowScene class]]) {
+            continue;
+        }
+        for (UIWindow *window in ((UIWindowScene *)scene).windows) {
+            if ([NSStringFromClass(window.class) containsString:@"KeyboardWindow"] ||
+                window.hidden || window.alpha <= 0.01) {
+                continue;
+            }
+            if (window.isKeyWindow) {
+                [ordered insertObject:window atIndex:0];
+            } else {
+                [ordered addObject:window];
+            }
+        }
+    }
+    return ordered;
+}
 
-@property(nonatomic, strong) UIView *container;
+@interface CMPanelView () <UITableViewDataSource, UITableViewDelegate>
+
+@property(nonatomic, strong) UIView *header;
+@property(nonatomic, strong) UIView *separator;
+@property(nonatomic, strong) UIImageView *titleIcon;
+@property(nonatomic, strong) UILabel *titleLabel;
 @property(nonatomic, strong) UIButton *closeButton;
-@property(nonatomic, strong) UILabel *searchBox;
+@property(nonatomic, strong) UIView *searchBox;
+@property(nonatomic, strong) UIImageView *searchIcon;
+@property(nonatomic, strong) UILabel *searchLabel;
 @property(nonatomic, strong) UITableView *tableView;
 @property(nonatomic, strong) UILabel *emptyLabel;
 @property(nonatomic, strong) UIView *keypad;
+@property(nonatomic, strong) UILabel *toastLabel;
 @property(nonatomic, strong) NSArray<CMItem *> *filteredItems;
 @property(nonatomic, copy) NSString *query;
 @property(nonatomic, assign) BOOL keypadVisible;
 @property(nonatomic, assign) CGSize lastKeypadSize;
 @property(nonatomic, assign) int reloadToken;
 @property(nonatomic, assign) BOOL presented;
+
 @end
 
 @implementation CMPanelView
@@ -38,10 +68,12 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
         _filteredItems = @[];
         _query = @"";
         _reloadToken = -1;
-        [self buildContainer];
+        self.backgroundColor = [UIColor systemBackgroundColor];
         [self buildHeader];
+        [self buildSearchBox];
         [self buildTable];
         [self buildKeypad];
+        [self buildToast];
         [self registerForReload];
         [self reloadData];
     }
@@ -54,32 +86,64 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     }
 }
 
+- (BOOL)isRTL {
+    return [UIView userInterfaceLayoutDirectionForSemanticContentAttribute:self.semanticContentAttribute] ==
+           UIUserInterfaceLayoutDirectionRightToLeft;
+}
+
 - (void)layoutSubviews {
     [super layoutSubviews];
-    CGRect bounds = self.bounds;
-    CGFloat panelHeight = self.panelHeight > 0 ? self.panelHeight : 300;
-    panelHeight = MIN(panelHeight, CGRectGetHeight(bounds));
-    self.container.frame = CGRectMake(0, CGRectGetHeight(bounds) - panelHeight,
-                                      CGRectGetWidth(bounds), panelHeight);
+    CGFloat width = CGRectGetWidth(self.bounds);
+    CGFloat height = CGRectGetHeight(self.bounds);
+    UIEdgeInsets safeArea = self.safeAreaInsets;
+    CGFloat top = safeArea.top > 0 ? safeArea.top : 0;
 
-    CGRect containerBounds = self.container.bounds;
-    CGFloat width = CGRectGetWidth(containerBounds);
-    self.closeButton.frame = CGRectMake(12, (kCMHeaderHeight - 32) / 2, 32, 32);
-    CGFloat searchX = CGRectGetMaxX(self.closeButton.frame) + 6;
-    self.searchBox.frame = CGRectMake(searchX, (kCMHeaderHeight - 36) / 2,
-                                      MAX(60, width - searchX - 12), 36);
+    self.header.frame = CGRectMake(0, top, width, kCMTitleHeight);
+    self.separator.frame = CGRectMake(0, CGRectGetMaxY(self.header.frame) - 0.5, width, 0.5);
+    self.closeButton.frame = [self closeButtonFrameInWidth:width top:top];
 
-    CGFloat keypadHeight = self.keypadVisible ? MIN(kCMKeypadHeight, panelHeight * 0.6) : 0;
-    self.keypad.frame = CGRectMake(0, CGRectGetHeight(containerBounds) - keypadHeight,
-                                   width, keypadHeight);
+    CGFloat titleMid = CGRectGetMidY(self.header.bounds);
+    self.titleIcon.frame = CGRectMake(0, 0, 18, 18);
+    CGSize titleSize = [self.titleLabel sizeThatFits:CGSizeMake(width, kCMTitleHeight)];
+    CGFloat iconSpacing = 6;
+    CGFloat groupWidth = 18 + iconSpacing + titleSize.width;
+    CGFloat groupX = (width - groupWidth) / 2;
+    self.titleIcon.center = CGPointMake(groupX + 9, titleMid);
+    self.titleLabel.frame = CGRectMake(groupX + 18 + iconSpacing, 0, titleSize.width, kCMTitleHeight);
+
+    CGFloat searchTop = CGRectGetMaxY(self.header.frame);
+    self.searchBox.frame = CGRectMake(kCMHorizontalInset, searchTop + 7,
+                                      width - kCMHorizontalInset * 2, kCMSearchHeight - 14);
+    CGFloat iconSize = 16;
+    BOOL rtl = [self isRTL];
+    CGFloat iconX = rtl ? CGRectGetMaxX(self.searchBox.bounds) - kCMHorizontalInset - iconSize
+                        : kCMHorizontalInset;
+    self.searchIcon.frame = CGRectMake(iconX, (CGRectGetHeight(self.searchBox.bounds) - iconSize) / 2,
+                                       iconSize, iconSize);
+    CGFloat labelX = rtl ? kCMHorizontalInset : kCMHorizontalInset + iconSize + 6;
+    CGFloat labelWidth = CGRectGetWidth(self.searchBox.bounds) - kCMHorizontalInset * 2 - iconSize - 6;
+    self.searchLabel.frame = CGRectMake(labelX, 0, labelWidth, CGRectGetHeight(self.searchBox.bounds));
+    self.searchLabel.textAlignment = rtl ? NSTextAlignmentRight : NSTextAlignmentLeft;
+
+    CGFloat keypadHeight = self.keypadVisible ? MIN(kCMKeypadHeight, height * 0.55) : 0;
+    CGFloat bottomInset = safeArea.bottom;
+    self.keypad.frame = CGRectMake(0, height - keypadHeight - bottomInset, width, keypadHeight);
     if (self.keypadVisible) {
         [self layoutKeypad];
     }
 
-    CGFloat tableTop = kCMHeaderHeight;
-    CGFloat tableHeight = MAX(0, CGRectGetHeight(containerBounds) - tableTop - keypadHeight);
+    CGFloat tableTop = CGRectGetMaxY(self.searchBox.frame) + 7;
+    CGFloat tableHeight = MAX(0, height - tableTop - keypadHeight - bottomInset);
     self.tableView.frame = CGRectMake(0, tableTop, width, tableHeight);
     self.emptyLabel.frame = self.tableView.frame;
+    self.toastLabel.frame = CGRectMake(20, CGRectGetMaxY(self.tableView.frame) - 56, width - 40, 40);
+}
+
+- (CGRect)closeButtonFrameInWidth:(CGFloat)width top:(CGFloat)top {
+    CGFloat size = 30;
+    CGFloat margin = kCMHorizontalInset;
+    CGFloat x = [self isRTL] ? margin : (width - size - margin);
+    return CGRectMake(x, top + (kCMTitleHeight - size) / 2, size, size);
 }
 
 - (void)setPanelHeight:(CGFloat)panelHeight {
@@ -99,6 +163,7 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     self.alpha = 0;
     [host addSubview:self];
     [host bringSubviewToFront:self];
+    [self reloadData];
     [self setNeedsLayout];
     [UIView animateWithDuration:0.2
                      animations:^{
@@ -126,40 +191,66 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
 
 #pragma mark - UI construction
 
-- (void)buildContainer {
-    self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.18];
-    UIView *container = [[UIView alloc] init];
-    container.backgroundColor = [UIColor secondarySystemBackgroundColor];
-    container.layer.cornerRadius = 12;
-    container.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
-    container.clipsToBounds = YES;
-    [self addSubview:container];
-    self.container = container;
+- (void)buildHeader {
+    UIView *header = [[UIView alloc] init];
+    header.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    [self addSubview:header];
+    self.header = header;
+
+    UIView *separator = [[UIView alloc] init];
+    separator.backgroundColor = [UIColor separatorColor];
+    [self addSubview:separator];
+    self.separator = separator;
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"doc.on.clipboard"]];
+    icon.tintColor = [UIColor secondaryLabelColor];
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [header addSubview:icon];
+    self.titleIcon = icon;
+
+    UILabel *title = [[UILabel alloc] init];
+    title.text = @"CopyMod";
+    title.font = [UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    title.textColor = [UIColor labelColor];
+    [header addSubview:title];
+    self.titleLabel = title;
+
+    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    [closeButton setImage:[UIImage systemImageNamed:@"xmark"] forState:UIControlStateNormal];
+    closeButton.tintColor = [UIColor secondaryLabelColor];
+    closeButton.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    closeButton.layer.cornerRadius = 15;
+    closeButton.clipsToBounds = YES;
+    [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
+    [header addSubview:closeButton];
+    self.closeButton = closeButton;
 }
 
-- (void)buildHeader {
-    UIButton *closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-    [closeButton setImage:[UIImage systemImageNamed:@"xmark.circle.fill"] forState:UIControlStateNormal];
-    closeButton.tintColor = [UIColor secondaryLabelColor];
-    [closeButton addTarget:self action:@selector(closeTapped) forControlEvents:UIControlEventTouchUpInside];
-    [self.container addSubview:closeButton];
-    self.closeButton = closeButton;
-
-    // A plain label rather than a text field: the panel owns its own keypad and
-    // must never raise the system keyboard on top of itself.
-    UILabel *searchBox = [[UILabel alloc] init];
-    searchBox.text = CMLocalizedString(@"Search");
-    searchBox.textColor = [UIColor placeholderTextColor];
-    searchBox.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+- (void)buildSearchBox {
+    // A tappable container rather than a text field: the panel owns its own
+    // keypad and must never raise the system keyboard on top of itself.
+    UIView *searchBox = [[UIView alloc] init];
     searchBox.backgroundColor = [UIColor tertiarySystemBackgroundColor];
-    searchBox.layer.cornerRadius = 8;
+    searchBox.layer.cornerRadius = 10;
     searchBox.clipsToBounds = YES;
     searchBox.userInteractionEnabled = YES;
-    searchBox.textAlignment = NSTextAlignmentNatural;
     [searchBox addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self
                                                                            action:@selector(toggleKeypad)]];
-    [self.container addSubview:searchBox];
+    [self addSubview:searchBox];
     self.searchBox = searchBox;
+
+    UIImageView *icon = [[UIImageView alloc] initWithImage:[UIImage systemImageNamed:@"magnifyingglass"]];
+    icon.tintColor = [UIColor placeholderTextColor];
+    icon.contentMode = UIViewContentModeScaleAspectFit;
+    [searchBox addSubview:icon];
+    self.searchIcon = icon;
+
+    UILabel *label = [[UILabel alloc] init];
+    label.text = CMLocalizedString(@"Search");
+    label.textColor = [UIColor placeholderTextColor];
+    label.font = [UIFont systemFontOfSize:16];
+    [searchBox addSubview:label];
+    self.searchLabel = label;
 }
 
 - (void)buildTable {
@@ -170,28 +261,44 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     tableView.separatorInset = UIEdgeInsetsMake(0, 16, 0, 16);
     tableView.rowHeight = UITableViewAutomaticDimension;
     tableView.estimatedRowHeight = 52;
+    tableView.keyboardDismissMode = UIScrollViewKeyboardDismissModeNone;
     [tableView registerClass:[UITableViewCell class] forCellReuseIdentifier:kCMCellIdentifier];
-    [self.container addSubview:tableView];
+    [self addSubview:tableView];
     self.tableView = tableView;
 
     UILabel *emptyLabel = [[UILabel alloc] init];
     emptyLabel.text = CMLocalizedString(@"No copied text yet");
     emptyLabel.textColor = [UIColor secondaryLabelColor];
-    emptyLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
+    emptyLabel.font = [UIFont systemFontOfSize:15];
     emptyLabel.textAlignment = NSTextAlignmentCenter;
     emptyLabel.numberOfLines = 0;
     emptyLabel.hidden = YES;
-    [self.container addSubview:emptyLabel];
+    [self addSubview:emptyLabel];
     self.emptyLabel = emptyLabel;
 }
 
 - (void)buildKeypad {
     UIView *keypad = [[UIView alloc] init];
-    keypad.backgroundColor = [UIColor tertiarySystemBackgroundColor];
+    keypad.backgroundColor = [UIColor secondarySystemBackgroundColor];
     keypad.hidden = YES;
     keypad.clipsToBounds = YES;
-    [self.container addSubview:keypad];
+    [self addSubview:keypad];
     self.keypad = keypad;
+}
+
+- (void)buildToast {
+    UILabel *toast = [[UILabel alloc] init];
+    toast.backgroundColor = [UIColor colorWithWhite:0 alpha:0.8];
+    toast.textColor = [UIColor whiteColor];
+    toast.font = [UIFont systemFontOfSize:14];
+    toast.textAlignment = NSTextAlignmentCenter;
+    toast.numberOfLines = 2;
+    toast.layer.cornerRadius = 10;
+    toast.clipsToBounds = YES;
+    toast.alpha = 0;
+    toast.hidden = YES;
+    [self addSubview:toast];
+    self.toastLabel = toast;
 }
 
 - (NSArray<NSString *> *)keypadRows {
@@ -209,7 +316,6 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     if (width <= 0 || height <= 0) {
         return;
     }
-    // Rebuilding only when the size changed avoids churn on every layout pass.
     if (CGSizeEqualToSize(self.lastKeypadSize, self.keypad.bounds.size)) {
         return;
     }
@@ -219,6 +325,7 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
         [subview removeFromSuperview];
     }
 
+    BOOL rtl = CMDeviceIsArabic();
     NSArray<NSString *> *rows = [self keypadRows];
     NSUInteger rowCount = rows.count + 1;
     CGFloat pad = 3;
@@ -230,7 +337,8 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
         CGFloat keyWidth = (width - pad * (CGFloat)(count + 1)) / (CGFloat)count;
         for (NSUInteger c = 0; c < count; c++) {
             NSString *title = [letters substringWithRange:NSMakeRange(c, 1)];
-            CGRect frame = CGRectMake(pad + (CGFloat)c * (keyWidth + pad),
+            NSUInteger position = rtl ? (count - 1 - c) : c;
+            CGRect frame = CGRectMake(pad + (CGFloat)position * (keyWidth + pad),
                                       pad + (CGFloat)r * (rowHeight + pad), keyWidth, rowHeight);
             [self.keypad addSubview:[self keyButtonWithTitle:title
                                                        frame:frame
@@ -240,35 +348,43 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
 
     // Utility row: space, delete, done.
     CGFloat y = pad + (CGFloat)rows.count * (rowHeight + pad);
-    CGFloat spaceWidth = width * 0.55;
-    CGFloat deleteWidth = width * 0.22;
+    CGFloat spaceWidth = width * 0.52;
+    CGFloat deleteWidth = width * 0.20;
     CGFloat doneWidth = width - spaceWidth - deleteWidth - pad * 4;
+    BOOL arabic = CMDeviceIsArabic();
 
+    CGFloat x = pad;
     UIButton *space = [self keyButtonWithTitle:CMLocalizedString(@"Space")
-                                         frame:CGRectMake(pad, y, spaceWidth, rowHeight)
+                                         frame:CGRectMake(x, y, spaceWidth, rowHeight)
                                         action:@selector(spaceTapped)];
     [self.keypad addSubview:space];
 
+    x += spaceWidth + pad;
     UIButton *delete = [self keyButtonWithTitle:@"⌫"
-                                          frame:CGRectMake(pad * 2 + spaceWidth, y, deleteWidth, rowHeight)
+                                          frame:CGRectMake(x, y, deleteWidth, rowHeight)
                                          action:@selector(deleteTapped)];
     [self.keypad addSubview:delete];
 
+    x += deleteWidth + pad;
     UIButton *done = [self keyButtonWithTitle:CMLocalizedString(@"Done")
-                                        frame:CGRectMake(pad * 3 + spaceWidth + deleteWidth, y, doneWidth, rowHeight)
+                                        frame:CGRectMake(x, y, doneWidth, rowHeight)
                                        action:@selector(doneTapped)];
+    done.backgroundColor = [UIColor systemBlueColor];
+    [done setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [self.keypad addSubview:done];
+
+    (void)arabic;
 }
 
 - (UIButton *)keyButtonWithTitle:(NSString *)title frame:(CGRect)frame action:(SEL)action {
     UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
     button.frame = frame;
     [button setTitle:title forState:UIControlStateNormal];
-    button.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightRegular];
+    [button setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont systemFontOfSize:19 weight:UIFontWeightRegular];
     button.backgroundColor = [UIColor systemBackgroundColor];
-    button.layer.cornerRadius = 5;
+    button.layer.cornerRadius = 6;
     button.clipsToBounds = YES;
-    button.autoresizingMask = UIViewAutoresizingFlexibleWidth;
     [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
     return button;
 }
@@ -278,6 +394,7 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
 - (void)toggleKeypad {
     self.keypadVisible = !self.keypadVisible;
     self.keypad.hidden = !self.keypadVisible;
+    self.lastKeypadSize = CGSizeZero;
     if (self.keypadVisible) {
         [self layoutKeypad];
     }
@@ -297,8 +414,7 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     if (self.query.length == 0) {
         return;
     }
-    NSString *updated = [self.query substringToIndex:self.query.length - 1];
-    [self updateQuery:updated];
+    [self updateQuery:[self.query substringToIndex:self.query.length - 1]];
 }
 
 - (void)doneTapped {
@@ -313,8 +429,14 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
 
 - (void)updateQuery:(NSString *)query {
     self.query = query;
-    self.searchBox.text = query.length ? query : CMLocalizedString(@"Search");
-    self.searchBox.textColor = query.length ? [UIColor labelColor] : [UIColor placeholderTextColor];
+    if (query.length) {
+        self.searchLabel.text = query;
+        self.searchLabel.textColor = [UIColor labelColor];
+        self.searchIcon.image = [UIImage systemImageNamed:@"magnifyingglass"];
+    } else {
+        self.searchLabel.text = CMLocalizedString(@"Search");
+        self.searchLabel.textColor = [UIColor placeholderTextColor];
+    }
     [self reloadData];
 }
 
@@ -355,10 +477,32 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
 }
 
 - (void)insertText:(NSString *)text {
-    id<UIKeyInput> input = [self.inputProvider cm_currentTextInput];
-    if (input && [input respondsToSelector:@selector(insertText:)]) {
-        [input insertText:text];
+    id<CMPanelTextInputProvider> provider = self.inputProvider;
+    BOOL inserted = provider ? [provider cm_insertText:text] : NO;
+    if (inserted) {
+        [self dismiss];
+    } else {
+        [self showToast:CMLocalizedString(@"Copied to clipboard")];
     }
+}
+
+- (void)showToast:(NSString *)message {
+    self.toastLabel.text = message;
+    self.toastLabel.hidden = NO;
+    [UIView animateWithDuration:0.2
+                     animations:^{
+                       self.toastLabel.alpha = 1;
+                     }];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.6 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+                     [UIView animateWithDuration:0.3
+                         animations:^{
+                           self.toastLabel.alpha = 0;
+                         }
+                         completion:^(BOOL finished) {
+                           self.toastLabel.hidden = YES;
+                         }];
+                   });
 }
 
 #pragma mark - UITableViewDataSource
@@ -371,11 +515,11 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:kCMCellIdentifier forIndexPath:indexPath];
     CMItem *item = self.filteredItems[(NSUInteger)indexPath.row];
 
-    UIListContentConfiguration *content = [UIListContentConfiguration cellConfiguration];
+    UIListContentConfiguration *content = [UIListContentConfiguration subtitleCellConfiguration];
     content.text = item.text;
     content.textProperties.numberOfLines = 2;
     content.textProperties.lineBreakMode = NSLineBreakByTruncatingTail;
-    content.textProperties.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+    content.textProperties.font = [UIFont systemFontOfSize:16];
     if (item.pinned) {
         content.image = [UIImage systemImageNamed:@"pin.fill"];
         content.imageProperties.tintColor = [UIColor systemOrangeColor];
@@ -399,7 +543,6 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     [tableView deselectRowAtIndexPath:indexPath animated:YES];
     CMItem *item = self.filteredItems[(NSUInteger)indexPath.row];
     [self insertText:item.text];
-    [self dismiss];
 }
 
 - (void)handleLongPress:(UILongPressGestureRecognizer *)gesture {
@@ -413,33 +556,6 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
     }
     CMItem *item = self.filteredItems[(NSUInteger)indexPath.row];
 
-    UIViewController *presenter = [self topViewController];
-    UIWindow *fallbackWindow = nil;
-    UIWindow *previousKeyWindow = nil;
-    if (!presenter) {
-        // The keyboard window often has no root view controller; present from
-        // a temporary alert-level window instead so the sheet always appears.
-        previousKeyWindow = UIApplication.sharedApplication.keyWindow;
-        fallbackWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        fallbackWindow.windowLevel = UIWindowLevelAlert + 1;
-        fallbackWindow.rootViewController = [[UIViewController alloc] init];
-        [fallbackWindow makeKeyAndVisible];
-        presenter = fallbackWindow.rootViewController;
-    }
-
-    __block BOOL finished = NO;
-    void (^teardown)(void) = ^{
-      if (finished) {
-          return;
-      }
-      finished = YES;
-      if (fallbackWindow) {
-          fallbackWindow.hidden = YES;
-          fallbackWindow.rootViewController = nil;
-          [previousKeyWindow makeKeyWindow];
-      }
-    };
-
     UIAlertController *sheet =
         [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
 
@@ -447,7 +563,7 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction *action) {
                                               [UIPasteboard generalPasteboard].string = item.text;
-                                              teardown();
+                                              [self showToast:CMLocalizedString(@"Copied to clipboard")];
                                             }]];
     NSString *pinTitle = item.pinned ? CMLocalizedString(@"Unpin") : CMLocalizedString(@"Pin");
     [sheet addAction:[UIAlertAction actionWithTitle:pinTitle
@@ -455,53 +571,38 @@ static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
                                             handler:^(UIAlertAction *action) {
                                               [[CMStore sharedStore] togglePinForItem:item];
                                               [self reloadData];
-                                              teardown();
                                             }]];
     [sheet addAction:[UIAlertAction actionWithTitle:CMLocalizedString(@"Delete")
                                               style:UIAlertActionStyleDestructive
                                             handler:^(UIAlertAction *action) {
                                               [[CMStore sharedStore] deleteItem:item];
                                               [self reloadData];
-                                              teardown();
                                             }]];
     [sheet addAction:[UIAlertAction actionWithTitle:CMLocalizedString(@"Cancel")
                                               style:UIAlertActionStyleCancel
-                                            handler:^(UIAlertAction *action) {
-                                              teardown();
-                                            }]];
+                                            handler:nil]];
 
-    // Required on iPad and harmless on iPhone.
     sheet.popoverPresentationController.sourceView = cell;
     sheet.popoverPresentationController.sourceRect = cell.bounds;
 
-    if (fallbackWindow) {
-        // Tapping outside the sheet dismisses it without invoking any action
-        // handler, so clean up through the presentation delegate as well.
-        objc_setAssociatedObject(sheet, kCMSheetTeardownKey, teardown, OBJC_ASSOCIATION_COPY_NONATOMIC);
-        sheet.presentationController.delegate = self;
-    }
-
-    [presenter presentViewController:sheet animated:YES completion:nil];
-}
-
-- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController {
-    void (^teardown)(void) =
-        objc_getAssociatedObject(presentationController.presentedViewController, kCMSheetTeardownKey);
-    if (teardown) {
-        teardown();
+    UIViewController *presenter = [self topViewController];
+    if (presenter) {
+        [presenter presentViewController:sheet animated:YES completion:nil];
     }
 }
 
 - (UIViewController *)topViewController {
-    UIViewController *controller = self.window.rootViewController;
-    if (!controller) {
-        for (UIWindow *window in UIApplication.sharedApplication.windows) {
-            if (window.rootViewController &&
-                ![NSStringFromClass(window.class) containsString:@"Keyboard"]) {
-                controller = window.rootViewController;
-                break;
-            }
+    // The panel lives in the keyboard window, whose root view controller may be
+    // nil. Prefer a normal app window so the action sheet has a real presenter.
+    UIViewController *controller = nil;
+    for (UIWindow *window in CMAppWindows()) {
+        if (window.rootViewController) {
+            controller = window.rootViewController;
+            break;
         }
+    }
+    if (!controller) {
+        controller = self.window.rootViewController;
     }
     while (controller.presentedViewController) {
         controller = controller.presentedViewController;

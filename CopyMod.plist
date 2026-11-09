@@ -1,8 +1,13 @@
 {
-    Filter = {
-        Classes = (
-            UIKeyboardImpl,
-            UIInputSetHostView,
-        );
-    };
+    Filter = (
+        {
+            Bundles = (com.apple.springboard);
+        },
+        {
+            Classes = (
+                UIKeyboardImpl,
+                UIInputSetHostView,
+            );
+        },
+    );
 }

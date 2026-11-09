@@ -6,7 +6,6 @@ static NSString *const kCMDomain = @"com.mody.copymod";
 static NSString *const kCMHistoryDomain = @"com.mody.copymod.history";
 static NSString *const kCMHistoryKey = @"history";
 static NSString *const kCMNotificationPrefs = @"com.mody.copymod.prefs";
-static NSString *const kCMNotificationReload = @"com.mody.copymod.reload";
 static NSString *const kCMNotificationClear = @"com.mody.copymod.clear";
 static NSString *const kCMNotificationExport = @"com.mody.copymod.export";
 
@@ -80,145 +79,120 @@ static NSString *CMLocalized(NSString *key) {
 
 - (NSArray *)specifiers {
     if (!_specifiers) {
-        _specifiers = [[self buildSpecifiers] mutableCopy];
+        _specifiers = [[self buildSpecifiers] mutableCopy] ?: [NSMutableArray array];
     }
     return _specifiers;
 }
 
-- (NSMutableArray *)buildSpecifiers {
-    NSMutableArray *specifiers = [NSMutableArray array];
+- (PSSpecifier *)switchSpecifierNamed:(NSString *)name key:(NSString *)key defaultValue:(BOOL)value {
+    PSSpecifier *specifier = [PSSpecifier preferenceSpecifierNamed:name
+                                                            target:self
+                                                               set:@selector(setPreferenceValue:forSpecifier:)
+                                                               get:@selector(readPreferenceValue:)
+                                                            detail:nil
+                                                              cell:PSSwitchCell
+                                                              edit:nil];
+    [specifier setProperty:kCMDomain forKey:@"defaults"];
+    [specifier setProperty:key forKey:@"key"];
+    [specifier setProperty:@(value) forKey:@"default"];
+    return specifier;
+}
 
-    [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
-
-    PSSpecifier *enabled = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Enabled")
-                                                          target:self
-                                                             set:@selector(setPreferenceValue:forSpecifier:)
-                                                             get:@selector(readPreferenceValue:)
-                                                          detail:nil
-                                                            cell:PSSwitchCell
-                                                            edit:nil];
-    [enabled setProperty:kCMDomain forKey:@"defaults"];
-    [enabled setProperty:@"enabled" forKey:@"key"];
-    [enabled setProperty:@YES forKey:@"default"];
-    [specifiers addObject:enabled];
-
-    PSSpecifier *activation = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Open with")
-                                                             target:self
-                                                                set:@selector(setPreferenceValue:forSpecifier:)
-                                                                get:@selector(readPreferenceValue:)
-                                                             detail:nil
-                                                               cell:PSLinkListCell
-                                                               edit:nil];
-    [activation setProperty:kCMDomain forKey:@"defaults"];
-    [activation setProperty:@"activation" forKey:@"key"];
-    [activation setProperty:@3 forKey:@"default"];
-    [activation setProperty:@[ CMLocalized(@"Keyboard button"), CMLocalized(@"Two-finger swipe up"), CMLocalized(@"Button and gesture") ]
-                     forKey:@"titles"];
-    [activation setProperty:@[ @1, @2, @3 ] forKey:@"values"];
-    [specifiers addObject:activation];
-
-    PSSpecifier *maxItems = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Maximum items")
-                                                           target:self
-                                                              set:@selector(setPreferenceValue:forSpecifier:)
-                                                              get:@selector(readPreferenceValue:)
-                                                           detail:nil
-                                                             cell:PSLinkListCell
-                                                             edit:nil];
-    [maxItems setProperty:kCMDomain forKey:@"defaults"];
-    [maxItems setProperty:@"maxItems" forKey:@"key"];
-    [maxItems setProperty:@200 forKey:@"default"];
-    [maxItems setProperty:@[ @"50", @"100", @"200", @"500", @"1000" ] forKey:@"titles"];
-    [maxItems setProperty:@[ @50, @100, @200, @500, @1000 ] forKey:@"values"];
-    [specifiers addObject:maxItems];
-
-    [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
-
-    PSSpecifier *ignoreLong = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Ignore very long text")
-                                                             target:self
-                                                                set:@selector(setPreferenceValue:forSpecifier:)
-                                                                get:@selector(readPreferenceValue:)
-                                                             detail:nil
-                                                               cell:PSSwitchCell
-                                                               edit:nil];
-    [ignoreLong setProperty:kCMDomain forKey:@"defaults"];
-    [ignoreLong setProperty:@"ignoreLongText" forKey:@"key"];
-    [ignoreLong setProperty:@YES forKey:@"default"];
-    [specifiers addObject:ignoreLong];
-
-    PSSpecifier *maxLength = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Maximum text length")
+- (PSSpecifier *)listSpecifierNamed:(NSString *)name
+                                key:(NSString *)key
+                          defaultV:(NSNumber *)defaultValue
+                             titles:(NSArray *)titles
+                             values:(NSArray *)values {
+    PSSpecifier *specifier = [PSSpecifier preferenceSpecifierNamed:name
                                                             target:self
                                                                set:@selector(setPreferenceValue:forSpecifier:)
                                                                get:@selector(readPreferenceValue:)
                                                             detail:nil
                                                               cell:PSLinkListCell
                                                               edit:nil];
-    [maxLength setProperty:kCMDomain forKey:@"defaults"];
-    [maxLength setProperty:@"maxTextLength" forKey:@"key"];
-    [maxLength setProperty:@5000 forKey:@"default"];
-    [maxLength setProperty:@[ @"1000", @"2000", @"5000", @"10000", @"20000" ] forKey:@"titles"];
-    [maxLength setProperty:@[ @1000, @2000, @5000, @10000, @20000 ] forKey:@"values"];
-    [specifiers addObject:maxLength];
+    [specifier setProperty:kCMDomain forKey:@"defaults"];
+    [specifier setProperty:key forKey:@"key"];
+    [specifier setProperty:defaultValue forKey:@"default"];
+    [specifier setProperty:titles forKey:@"titles"];
+    [specifier setProperty:values forKey:@"values"];
+    return specifier;
+}
 
-    PSSpecifier *ignoreSecure = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Ignore password fields")
-                                                               target:self
-                                                                  set:@selector(setPreferenceValue:forSpecifier:)
-                                                                  get:@selector(readPreferenceValue:)
-                                                               detail:nil
-                                                                 cell:PSSwitchCell
-                                                                 edit:nil];
-    [ignoreSecure setProperty:kCMDomain forKey:@"defaults"];
-    [ignoreSecure setProperty:@"ignoreSecureText" forKey:@"key"];
-    [ignoreSecure setProperty:@YES forKey:@"default"];
-    [specifiers addObject:ignoreSecure];
+- (PSSpecifier *)buttonSpecifierNamed:(NSString *)name action:(SEL)action {
+    PSSpecifier *specifier = [PSSpecifier preferenceSpecifierNamed:name
+                                                            target:self
+                                                               set:nil
+                                                               get:nil
+                                                            detail:nil
+                                                              cell:PSButtonCell
+                                                              edit:nil];
+    specifier.buttonAction = action;
+    return specifier;
+}
 
-    [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
+- (NSMutableArray *)buildSpecifiers {
+    NSMutableArray *specifiers = [NSMutableArray array];
+    @try {
+        [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
+        [specifiers addObject:[self switchSpecifierNamed:CMLocalized(@"Enabled")
+                                                    key:@"enabled"
+                                           defaultValue:YES]];
 
-    PSSpecifier *addApp = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Add app")
-                                                         target:self
-                                                            set:nil
-                                                            get:nil
-                                                         detail:nil
-                                                           cell:PSButtonCell
-                                                           edit:nil];
-    addApp.buttonAction = @selector(addIgnoredApp);
-    [specifiers addObject:addApp];
+        [specifiers addObject:[self listSpecifierNamed:CMLocalized(@"Open with")
+                                                   key:@"activation"
+                                             defaultV:@2
+                                                titles:@[ CMLocalized(@"Keyboard button"),
+                                                          CMLocalized(@"Two-finger swipe up"),
+                                                          CMLocalized(@"Button and gesture") ]
+                                                values:@[ @1, @2, @3 ]]];
 
-    for (NSString *bundleID in self.ignoredApps) {
-        PSSpecifier *app = [PSSpecifier preferenceSpecifierNamed:bundleID
-                                                          target:self
-                                                             set:nil
-                                                             get:nil
-                                                          detail:nil
-                                                            cell:PSButtonCell
-                                                            edit:nil];
-        app.buttonAction = @selector(removeIgnoredApp:);
-        [app setProperty:bundleID forKey:@"cmBundleID"];
-        [specifiers addObject:app];
+        [specifiers addObject:[self listSpecifierNamed:CMLocalized(@"Maximum items")
+                                                   key:@"maxItems"
+                                             defaultV:@200
+                                                titles:@[ @"50", @"100", @"200", @"500", @"1000" ]
+                                                values:@[ @50, @100, @200, @500, @1000 ]]];
+
+        [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
+        [specifiers addObject:[self switchSpecifierNamed:CMLocalized(@"Ignore very long text")
+                                                    key:@"ignoreLongText"
+                                           defaultValue:YES]];
+
+        PSSpecifier *maxLength = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Maximum text length")
+                                                                target:self
+                                                                   set:@selector(setPreferenceValue:forSpecifier:)
+                                                                   get:@selector(readPreferenceValue:)
+                                                                detail:nil
+                                                                  cell:PSEditTextCell
+                                                                  edit:nil];
+        [maxLength setProperty:kCMDomain forKey:@"defaults"];
+        [maxLength setProperty:@"maxTextLength" forKey:@"key"];
+        [maxLength setProperty:@5000 forKey:@"default"];
+        [maxLength setProperty:@(UIKeyboardTypeNumberPad) forKey:@"keyboardType"];
+        [specifiers addObject:maxLength];
+
+        [specifiers addObject:[self switchSpecifierNamed:CMLocalized(@"Ignore password fields")
+                                                    key:@"ignoreSecureText"
+                                           defaultValue:YES]];
+
+        [specifiers addObject:[PSSpecifier groupSpecifierWithName:CMLocalized(@"Ignored apps")]];
+        [specifiers addObject:[self buttonSpecifierNamed:CMLocalized(@"Add app")
+                                                  action:@selector(addIgnoredApp)]];
+        for (NSString *bundleID in self.ignoredApps) {
+            PSSpecifier *app = [self buttonSpecifierNamed:bundleID action:@selector(removeIgnoredApp:)];
+            [app setProperty:bundleID forKey:@"cmBundleID"];
+            [specifiers addObject:app];
+        }
+
+        [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
+        PSSpecifier *clear = [self buttonSpecifierNamed:CMLocalized(@"Clear history")
+                                                 action:@selector(clearHistory)];
+        [clear setProperty:@YES forKey:@"isDestructive"];
+        [specifiers addObject:clear];
+        [specifiers addObject:[self buttonSpecifierNamed:CMLocalized(@"Export history")
+                                                  action:@selector(exportHistory)]];
+    } @catch (NSException *exception) {
+        NSLog(@"[CopyMod] specifiers build failed: %@", exception.reason);
     }
-
-    [specifiers addObject:[PSSpecifier groupSpecifierWithName:@""]];
-
-    PSSpecifier *clear = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Clear history")
-                                                        target:self
-                                                           set:nil
-                                                           get:nil
-                                                        detail:nil
-                                                          cell:PSButtonCell
-                                                          edit:nil];
-    clear.buttonAction = @selector(clearHistory);
-    [clear setProperty:@YES forKey:@"isDestructive"];
-    [specifiers addObject:clear];
-
-    PSSpecifier *export = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Export history")
-                                                         target:self
-                                                            set:nil
-                                                            get:nil
-                                                         detail:nil
-                                                           cell:PSButtonCell
-                                                           edit:nil];
-    export.buttonAction = @selector(exportHistory);
-    [specifiers addObject:export];
-
     return specifiers;
 }
 

@@ -24,8 +24,7 @@
     item.timestamp = [timestamp isKindOfClass:[NSNumber class]] ? [timestamp doubleValue] : 0;
     id bundle = dictionary[@"sourceBundleID"];
     item.sourceBundleID = [bundle isKindOfClass:[NSString class]] ? bundle : nil;
-    id pinned = dictionary[@"pinned"];
-    item.pinned = [pinned isKindOfClass:[NSNumber class]] ? [pinned boolValue] : NO;
+    item.pinned = [dictionary[@"pinned"] boolValue];
     return item;
 }
 

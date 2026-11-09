@@ -3,10 +3,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/// Supplies the responder that should receive the text chosen in the panel.
+/// Supplies text insertion to the panel. The bar implements this so the panel
+/// stays independent from the keyboard internals.
 @protocol CMPanelTextInputProvider <NSObject>
-/// The responder currently accepting text from the keyboard, or nil.
-- (nullable id<UIKeyInput>)cm_currentTextInput;
+/// Inserts text into the focused field. Returns NO when no field could take it.
+- (BOOL)cm_insertText:(NSString *)text;
 @end
 
 /// The clipboard-history panel.
@@ -27,6 +28,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^dismissHandler)(void);
 
 - (void)presentInView:(UIView *)host;
+- (void)dismiss;
 - (void)reloadData;
 
 @end
