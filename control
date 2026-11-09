@@ -1,6 +1,6 @@
 Package: com.mody.copymod
 Name: CopyMod
-Version: 1.0.0
+Version: 1.0.1
 Architecture: iphoneos-arm64e
 Description: Clipboard history logger. Records every text you copy and shows the history inside the stock iOS keyboard as a panel.
 Depiction: https://mody-iq.github.io/CopyMod/

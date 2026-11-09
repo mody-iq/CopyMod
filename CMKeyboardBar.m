@@ -25,6 +25,7 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
 @property(nonatomic, strong) UISwipeGestureRecognizer *swipe;
 @property(nonatomic, strong) CMPanelView *panel;
 @property(nonatomic, assign) BOOL presenting;
+@property(nonatomic, assign) CMActivation installedActivation;
 @end
 
 @implementation CMKeyboardBar
@@ -37,39 +38,57 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
     }
 
     // -layoutSubviews is called on every keyboard pass, so the attach path must
-    // be idempotent: on a repeat call we only refresh the button geometry.
-    if (self.hostView == hostView) {
-        if (self.button && self.button.superview != hostView) {
+    // be idempotent: on a repeat call we only refresh geometry and preferences.
+    if (self.hostView != hostView) {
+        [self detach];
+        self.hostView = hostView;
+    }
+
+    [self applyActivation];
+
+    if (self.button) {
+        if (self.button.superview != hostView) {
             // The keyboard rebuilt its subviews; re-attach our button.
             [hostView addSubview:self.button];
             [hostView bringSubviewToFront:self.button];
         }
-        if (self.swipe && self.swipe.view != hostView) {
-            [hostView addGestureRecognizer:self.swipe];
-        }
-        if (self.button) {
-            [self layoutButtonForHostView:hostView];
-        }
-        // The keyboard re-lays its own subviews on every pass; keep our panel
-        // above them so it is never hidden behind the keys.
-        if (self.panel && self.panel.superview == hostView) {
-            [hostView bringSubviewToFront:self.panel];
-        }
-        return YES;
+        [self layoutButtonForHostView:hostView];
     }
-
-    [self detach];
-    self.hostView = hostView;
-
-    CMActivation activation = [CMPreferences activation];
-
-    if (activation & CMActivationButton) {
-        [self installButtonInHostView:hostView];
+    if (self.swipe && self.swipe.view != hostView) {
+        [hostView addGestureRecognizer:self.swipe];
     }
-    if (activation & CMActivationGesture) {
-        [self installGestureInHostView:hostView];
+    // The keyboard re-lays its own subviews on every pass; keep our panel
+    // above them so it is never hidden behind the keys.
+    if (self.panel && self.panel.superview == hostView) {
+        [hostView bringSubviewToFront:self.panel];
     }
     return YES;
+}
+
+// Syncs the installed button/gesture with the current preference so a changed
+// activation method applies on the next keyboard layout pass.
+- (void)applyActivation {
+    CMActivation activation = [CMPreferences activation];
+    if (activation == self.installedActivation) {
+        return;
+    }
+    self.installedActivation = activation;
+
+    if (activation & CMActivationButton) {
+        [self installButtonInHostView:self.hostView];
+    } else if (self.button) {
+        [self.button removeFromSuperview];
+        self.button = nil;
+    }
+
+    if (activation & CMActivationGesture) {
+        if (!self.swipe) {
+            [self installGestureInHostView:self.hostView];
+        }
+    } else if (self.swipe) {
+        [self.swipe.view removeGestureRecognizer:self.swipe];
+        self.swipe = nil;
+    }
 }
 
 - (void)detach {
@@ -79,6 +98,7 @@ static NSString *const kCMButtonAccessibilityLabel = @"Clipboard history";
         [self.swipe.view removeGestureRecognizer:self.swipe];
         self.swipe = nil;
     }
+    self.installedActivation = 0;
     self.hostView = nil;
 }
 

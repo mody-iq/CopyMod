@@ -111,7 +111,7 @@ static NSString *CMLocalized(NSString *key) {
                                                                edit:nil];
     [activation setProperty:kCMDomain forKey:@"defaults"];
     [activation setProperty:@"activation" forKey:@"key"];
-    [activation setProperty:@2 forKey:@"default"];
+    [activation setProperty:@3 forKey:@"default"];
     [activation setProperty:@[ CMLocalized(@"Keyboard button"), CMLocalized(@"Two-finger swipe up"), CMLocalized(@"Button and gesture") ]
                      forKey:@"titles"];
     [activation setProperty:@[ @1, @2, @3 ] forKey:@"values"];
@@ -150,12 +150,13 @@ static NSString *CMLocalized(NSString *key) {
                                                                set:@selector(setPreferenceValue:forSpecifier:)
                                                                get:@selector(readPreferenceValue:)
                                                             detail:nil
-                                                              cell:PSEditTextCell
+                                                              cell:PSLinkListCell
                                                               edit:nil];
     [maxLength setProperty:kCMDomain forKey:@"defaults"];
     [maxLength setProperty:@"maxTextLength" forKey:@"key"];
     [maxLength setProperty:@5000 forKey:@"default"];
-    [maxLength setProperty:@"0123456789" forKey:@"keyboardType"];
+    [maxLength setProperty:@[ @"1000", @"2000", @"5000", @"10000", @"20000" ] forKey:@"titles"];
+    [maxLength setProperty:@[ @1000, @2000, @5000, @10000, @20000 ] forKey:@"values"];
     [specifiers addObject:maxLength];
 
     PSSpecifier *ignoreSecure = [PSSpecifier preferenceSpecifierNamed:CMLocalized(@"Ignore password fields")
@@ -329,15 +330,22 @@ static NSString *CMLocalized(NSString *key) {
 }
 
 - (void)exportHistory {
+    NSDate *requested = [NSDate date];
     CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
                                          (__bridge CFStringRef)kCMNotificationExport, nil, nil, YES);
     NSString *path = jbroot(@"/var/mobile/Library/com.mody.copymod/export.txt");
     // Give the recording process a moment to write before reporting.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-                     if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+                     NSDictionary *attributes =
+                         [[NSFileManager defaultManager] attributesOfItemAtPath:path error:NULL];
+                     NSDate *modified = attributes[NSFileModificationDate];
+                     // A stale file from an earlier export must not count as success.
+                     if (modified && [modified timeIntervalSinceDate:requested] > -1.0) {
                          [self presentMessage:[NSString stringWithFormat:@"%@ %@",
                                                                          CMLocalized(@"Exported to"), path]];
+                     } else if (attributes) {
+                         [self presentMessage:CMLocalized(@"Export failed")];
                      } else {
                          [self presentMessage:CMLocalized(@"No history to export")];
                      }

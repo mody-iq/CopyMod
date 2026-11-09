@@ -24,7 +24,8 @@
     item.timestamp = [timestamp isKindOfClass:[NSNumber class]] ? [timestamp doubleValue] : 0;
     id bundle = dictionary[@"sourceBundleID"];
     item.sourceBundleID = [bundle isKindOfClass:[NSString class]] ? bundle : nil;
-    item.pinned = [dictionary[@"pinned"] boolValue];
+    id pinned = dictionary[@"pinned"];
+    item.pinned = [pinned isKindOfClass:[NSNumber class]] ? [pinned boolValue] : NO;
     return item;
 }
 
@@ -78,6 +79,13 @@
     if ([ownBundle isEqualToString:@"com.apple.springboard"]) {
         return YES;
     }
+    // Sandboxed apps never gain write access, so probe once instead of on
+    // every poll tick.
+    static BOOL checked = NO;
+    static BOOL writable = NO;
+    if (checked) {
+        return writable;
+    }
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSString *directory = [self historyDirectory];
     if (![fileManager fileExistsAtPath:directory]) {
@@ -87,7 +95,9 @@
                                      error:NULL];
         chmod([directory fileSystemRepresentation], 0755);
     }
-    return [fileManager isWritableFileAtPath:directory];
+    writable = [fileManager isWritableFileAtPath:directory];
+    checked = YES;
+    return writable;
 }
 
 #pragma mark - Lifecycle
@@ -244,10 +254,13 @@
     if (![data writeToFile:temporary atomically:YES]) {
         return;
     }
-    [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
-    if ([[NSFileManager defaultManager] moveItemAtPath:temporary toPath:path error:NULL]) {
-        chmod([path fileSystemRepresentation], 0644);
+    // rename() replaces the target atomically; a remove-then-move would leave
+    // a window where concurrent readers see no history file at all.
+    if (rename(temporary.fileSystemRepresentation, path.fileSystemRepresentation) != 0) {
+        [[NSFileManager defaultManager] removeItemAtPath:temporary error:NULL];
+        return;
     }
+    chmod([path fileSystemRepresentation], 0644);
 }
 
 - (NSArray<CMItem *> *)items {

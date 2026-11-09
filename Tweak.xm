@@ -6,6 +6,7 @@
 #import <UIKit/UIKit.h>
 #import <substrate.h>
 #import <objc/runtime.h>
+#import <notify.h>
 
 #import "CMCommon.h"
 #import "CMStore.h"
@@ -33,10 +34,13 @@ static void CMAttachBarToHostView(id hostView) {
         return;
     }
     @try {
+        CMKeyboardBar *bar = CMBarForHostView(hostView);
         if (![CMPreferences enabled]) {
+            // Remove any previously installed UI as soon as the tweak is
+            // disabled, instead of leaving it until the keyboard rebuilds.
+            [bar detach];
             return;
         }
-        CMKeyboardBar *bar = CMBarForHostView(hostView);
         if (!bar) {
             bar = [[CMKeyboardBar alloc] init];
             CMSetBarForHostView(hostView, bar);
@@ -106,6 +110,19 @@ static void CMStartMonitorIfNeeded(void) {
     @autoreleasepool {
         // Nothing heavy at load time: everything is deferred to the main queue.
         CMStartMonitorIfNeeded();
+
+        // React to preference changes so enabling/disabling takes effect
+        // without waiting for the next keyboard delegate callback.
+        int prefsToken = 0;
+        notify_register_dispatch(kCMNotificationPrefs.UTF8String, &prefsToken,
+                                 dispatch_get_main_queue(), ^(int t) {
+                                   [CMPreferences reload];
+                                   if ([CMPreferences enabled]) {
+                                       CMStartMonitorIfNeeded();
+                                   } else {
+                                       [[CMMonitor sharedMonitor] stop];
+                                   }
+                                 });
 
         // Install the keyboard UI hooks only where the classes are actually
         // present. Elsewhere the tweak still records copies but never touches

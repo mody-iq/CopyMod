@@ -5,12 +5,14 @@
 #import "CMLocalization.h"
 
 #import <notify.h>
+#import <objc/runtime.h>
 
 static NSString *const kCMCellIdentifier = @"CMHistoryCell";
 static const CGFloat kCMHeaderHeight = 52;
 static const CGFloat kCMKeypadHeight = 214;
+static const void *kCMSheetTeardownKey = &kCMSheetTeardownKey;
 
-@interface CMPanelView () <UITableViewDataSource, UITableViewDelegate>
+@interface CMPanelView () <UITableViewDataSource, UITableViewDelegate, UIAdaptivePresentationControllerDelegate>
 
 @property(nonatomic, strong) UIView *container;
 @property(nonatomic, strong) UIButton *closeButton;
@@ -411,6 +413,33 @@ static const CGFloat kCMKeypadHeight = 214;
     }
     CMItem *item = self.filteredItems[(NSUInteger)indexPath.row];
 
+    UIViewController *presenter = [self topViewController];
+    UIWindow *fallbackWindow = nil;
+    UIWindow *previousKeyWindow = nil;
+    if (!presenter) {
+        // The keyboard window often has no root view controller; present from
+        // a temporary alert-level window instead so the sheet always appears.
+        previousKeyWindow = UIApplication.sharedApplication.keyWindow;
+        fallbackWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        fallbackWindow.windowLevel = UIWindowLevelAlert + 1;
+        fallbackWindow.rootViewController = [[UIViewController alloc] init];
+        [fallbackWindow makeKeyAndVisible];
+        presenter = fallbackWindow.rootViewController;
+    }
+
+    __block BOOL finished = NO;
+    void (^teardown)(void) = ^{
+      if (finished) {
+          return;
+      }
+      finished = YES;
+      if (fallbackWindow) {
+          fallbackWindow.hidden = YES;
+          fallbackWindow.rootViewController = nil;
+          [previousKeyWindow makeKeyWindow];
+      }
+    };
+
     UIAlertController *sheet =
         [UIAlertController alertControllerWithTitle:nil message:nil preferredStyle:UIAlertControllerStyleActionSheet];
 
@@ -418,6 +447,7 @@ static const CGFloat kCMKeypadHeight = 214;
                                               style:UIAlertActionStyleDefault
                                             handler:^(UIAlertAction *action) {
                                               [UIPasteboard generalPasteboard].string = item.text;
+                                              teardown();
                                             }]];
     NSString *pinTitle = item.pinned ? CMLocalizedString(@"Unpin") : CMLocalizedString(@"Pin");
     [sheet addAction:[UIAlertAction actionWithTitle:pinTitle
@@ -425,30 +455,54 @@ static const CGFloat kCMKeypadHeight = 214;
                                             handler:^(UIAlertAction *action) {
                                               [[CMStore sharedStore] togglePinForItem:item];
                                               [self reloadData];
+                                              teardown();
                                             }]];
     [sheet addAction:[UIAlertAction actionWithTitle:CMLocalizedString(@"Delete")
                                               style:UIAlertActionStyleDestructive
                                             handler:^(UIAlertAction *action) {
                                               [[CMStore sharedStore] deleteItem:item];
                                               [self reloadData];
+                                              teardown();
                                             }]];
     [sheet addAction:[UIAlertAction actionWithTitle:CMLocalizedString(@"Cancel")
                                               style:UIAlertActionStyleCancel
-                                            handler:nil]];
+                                            handler:^(UIAlertAction *action) {
+                                              teardown();
+                                            }]];
 
     // Required on iPad and harmless on iPhone.
     sheet.popoverPresentationController.sourceView = cell;
     sheet.popoverPresentationController.sourceRect = cell.bounds;
 
-    UIViewController *presenter = [self topViewController];
-    if (presenter) {
-        [presenter presentViewController:sheet animated:YES completion:nil];
+    if (fallbackWindow) {
+        // Tapping outside the sheet dismisses it without invoking any action
+        // handler, so clean up through the presentation delegate as well.
+        objc_setAssociatedObject(sheet, kCMSheetTeardownKey, teardown, OBJC_ASSOCIATION_COPY_NONATOMIC);
+        sheet.presentationController.delegate = self;
+    }
+
+    [presenter presentViewController:sheet animated:YES completion:nil];
+}
+
+- (void)presentationControllerDidDismiss:(UIPresentationController *)presentationController {
+    void (^teardown)(void) =
+        objc_getAssociatedObject(presentationController.presentedViewController, kCMSheetTeardownKey);
+    if (teardown) {
+        teardown();
     }
 }
 
 - (UIViewController *)topViewController {
-    UIWindow *window = self.window;
-    UIViewController *controller = window.rootViewController;
+    UIViewController *controller = self.window.rootViewController;
+    if (!controller) {
+        for (UIWindow *window in UIApplication.sharedApplication.windows) {
+            if (window.rootViewController &&
+                ![NSStringFromClass(window.class) containsString:@"Keyboard"]) {
+                controller = window.rootViewController;
+                break;
+            }
+        }
+    }
     while (controller.presentedViewController) {
         controller = controller.presentedViewController;
     }
