@@ -27,12 +27,34 @@ jobs:
 
       - name: Install iOS SDK
         run: |
+          set -euo pipefail
           mkdir -p "$THEOS/sdks"
-          SDK_URL="https://github.com/xybp888/iOS-SDKs/releases/download/iOS${SDK_VERSION}-SDKs/iPhoneOS${SDK_VERSION}.sdk.zip"
-          curl -L --fail -o /tmp/sdk.zip "$SDK_URL"
+          PRIMARY_URL="https://github.com/xybp888/iOS-SDKs/releases/download/iOS${SDK_VERSION}-SDKs/iPhoneOS${SDK_VERSION}.sdk.zip"
+          FALLBACK_URL="https://github.com/xybp888/iOS-SDKs/releases/download/iOS18.5-SDKs/iPhoneOS18.5.sdk.zip"
+
+          download() {
+            local url="$1"
+            # The GitHub release redirect can drop the connection; retry a few
+            # times before giving up.
+            curl -fL --retry 5 --retry-all-errors --retry-delay 5 \
+                 --connect-timeout 30 --max-time 600 \
+                 -o /tmp/sdk.zip "$url"
+          }
+
+          if ! download "$PRIMARY_URL"; then
+            echo "Primary SDK download failed, falling back to iOS 18.5"
+            download "$FALLBACK_URL"
+          fi
+
+          rm -rf /tmp/sdk
           unzip -q /tmp/sdk.zip -d /tmp/sdk
           # The archive contains a top level iPhoneOS<ver>.sdk directory.
-          cp -R "/tmp/sdk/iPhoneOS${SDK_VERSION}.sdk" "$THEOS/sdks/"
+          SDK_DIR="$(find /tmp/sdk -maxdepth 1 -type d -name 'iPhoneOS*.sdk' | head -n 1)"
+          if [ -z "$SDK_DIR" ]; then
+            echo "No .sdk directory found in the archive" >&2
+            exit 1
+          fi
+          cp -R "$SDK_DIR" "$THEOS/sdks/"
           ls -la "$THEOS/sdks"
 
       - name: Build package
