@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write
 
+# Serialise runs so the index-update job never races another push to main.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: macos-15
@@ -91,19 +96,26 @@ jobs:
           gh release upload "${GITHUB_REF_NAME}" "$DEB" --clobber
 
       # Rebuild the Sileo/Cydia index from the published releases and commit it
-      # to docs/ (served by GitHub Pages).
+      # to docs/ on main (served by GitHub Pages). Only runs when a new release
+      # may exist, i.e. on a tag push or a manual run.
       - name: Update repository index
-        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main'
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Work on main regardless of whether we were triggered by a tag.
+          git fetch origin main
+          git checkout -B main origin/main
           python3 tools/make_repo.py
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet -- docs/Packages docs/Packages.gz; then
-            git add docs/Packages docs/Packages.gz docs/.nojekyll
-            git commit -m "Update repository index [skip ci]"
-            git push
-          else
+          if git diff --quiet -- docs/Packages docs/Packages.gz; then
             echo "Repository index already up to date"
+            exit 0
           fi
+          git add docs/Packages docs/Packages.gz docs/.nojekyll
+          git commit -m "Update repository index [skip ci]"
+          # Another push may land while this job runs; rebase before pushing.
+          git fetch origin main
+          git rebase origin/main
+          git push origin main
