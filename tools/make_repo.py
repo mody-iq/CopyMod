@@ -14,7 +14,11 @@ import tempfile
 import urllib.request
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "mody-iq/CopyMod")
-PAGES = "https://%s.github.io/%s" % (REPO.split("/")[0], REPO.split("/")[1])
+OWNER, NAME = REPO.split("/")
+PAGES = "https://%s.github.io/%s" % (OWNER, NAME)
+# raw.githubusercontent.com serves the index and assets immediately, even
+# before GitHub Pages has been enabled for the repository.
+RAW = "https://raw.githubusercontent.com/%s/main/docs" % REPO
 
 # Fields worth carrying from the deb control file, in output order.
 CONTROL_FIELDS = [
@@ -73,8 +77,8 @@ def main():
             lines.append("Filename: %s" % url)
             lines.append("Size: %d" % len(data))
             lines.append("SHA256: %s" % hashlib.sha256(data).hexdigest())
-            lines.append("Depiction: %s/" % PAGES)
-            lines.append("Icon: %s/icon.png" % PAGES)
+            lines.append("Depiction: https://github.com/%s" % REPO)
+            lines.append("Icon: %s/icon.png" % RAW)
             stanzas.append("\n".join(lines))
 
     if not stanzas:

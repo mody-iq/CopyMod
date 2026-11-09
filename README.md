@@ -30,3 +30,22 @@ make package FINALPACKAGE=1
 ```
 
 GitHub Actions builds the `.deb` automatically on every push to `main`.
+
+## Install (no computer needed)
+
+Add this source in Sileo or Zebra and install CopyMod:
+
+```text
+https://raw.githubusercontent.com/mody-iq/CopyMod/main/docs/
+```
+
+This is the same repository that GitHub Pages serves at
+`https://mody-iq.github.io/CopyMod/` once Pages is enabled
+(Settings → Pages → Source: `main` / `/docs`); both work.
+
+You can also download the latest `.deb` from the
+[Releases page](https://github.com/mody-iq/CopyMod/releases) and open it in
+Sileo, Zebra or Filza.
+
+Releases are published from `v*` tags: bump the version, tag `vX.Y.Z`, push the
+tag, and CI builds the deb, publishes it and refreshes the repository index.

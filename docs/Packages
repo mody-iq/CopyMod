@@ -11,5 +11,5 @@ Installed-Size: 484
 Filename: https://github.com/mody-iq/CopyMod/releases/download/v1.0.2/com.mody.copymod_1.0.2_iphoneos-arm64e.deb
 Size: 51976
 SHA256: b8b618962a82088801dd2c12877b4b2355c3f22a2381c2135beb07cc42ff97b9
-Depiction: https://mody-iq.github.io/CopyMod/
-Icon: https://mody-iq.github.io/CopyMod/icon.png
+Depiction: https://github.com/mody-iq/CopyMod
+Icon: https://raw.githubusercontent.com/mody-iq/CopyMod/main/docs/icon.png
